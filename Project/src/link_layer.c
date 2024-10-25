@@ -187,9 +187,28 @@ void alarmHandler(int Signal){
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
+
+int calculate_bcc2( int buf, int* buf_){
+    return 0;
+}
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    // TODO
+
+
+    //1.Calculate BBC2
+    //2. Stuff payload stuff BCC2
+    //3. F, A, C, BCC1, D1...Dn, BCC2, F
+    //4. Write Bytes(...)
+    //5. Receive Confirmation (State Machine)
+
+
+    //make bcc2 XOR
+    //0x7D is for stuffing
+    //stuffing array  Flag^0x20 Esc^x20
+    //esc before
+    //made stuffing of the bcc2
+    //define frame
+    //handle of the frame frameindex%2 
 
     return 0;
 }
@@ -199,8 +218,10 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
-    // TODO
-
+    //1. Read Frame (STM)   
+    //2. Destuffing
+    //3. Calculate BCC2
+    //4. Validate BCC2
     return 0;
 }
 
