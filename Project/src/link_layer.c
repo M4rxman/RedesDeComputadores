@@ -11,6 +11,12 @@
 #define BYTESIZE 5
 #define SET_I 0x03
 #define UA_I 0x07
+#define ESC 0x7D
+#define RR0 0xAA
+#define RR1 0xAB
+#define REJ0 0x54
+#define REJ1 0x55
+#define DISC 0x0B
 
 int alarmEnabled;
 int alarmCount;
@@ -23,13 +29,13 @@ int fd;
 int retransmitons;
 int timeout;
 int BUFFER_SIZE=5;
-int stage;
-#define StartStage 0
-#define FlagStage 1
-#define AdressStage 2
-#define controlStage 3
-#define bccStage 4
-#define flagendStage 5
+int state;
+#define StartState 0
+#define FlagState 1
+#define AdressState 2
+#define controlState 3
+#define bccState 4
+#define flagendState 5
 
 
 ////////////////////////////////////////////////
@@ -37,32 +43,32 @@ int stage;
 ////////////////////////////////////////////////
 int changeFase(LinkLayerRole role ,unsigned char buf,int* state){
     if(role==LlTx){
-        if(state==StartStage && buf==FLAG){ 
-            state=FlagStage;
+        if(state==StartState && buf==FLAG){ 
+            state=FlagState;
             return 1;
             }
-        else if( state== FlagStage && buf==ATrRr){
-            state=AdressStage;
+        else if( state== FlagState && buf==ATrRr){
+            state=AdressState;
             return 1;
             }
-        else if (state== AdressStage && buf==SET_I){
-            state=controlStage;
+        else if (state== AdressState && buf==SET_I){
+            state=controlState;
             return 1;
             }
-        else if (state==controlStage && buf==(ATrRr^SET_I)){
-            state=bccStage;
+        else if (state==controlState && buf==(ATrRr^SET_I)){
+            state=bccState;
             return 1;
             }
-        else if (state==bccStage && buf==FLAG){
-            state=flagendStage;
+        else if (state==bccState && buf==FLAG){
+            state=flagendState;
             return 1;
             }
         else if (buf==FLAG){ 
-            state=FlagStage;
+            state=FlagState;
             return 1;
             }
         else{
-            state=StartStage;
+            state=StartState;
             return 1;
             }
     }
@@ -75,26 +81,26 @@ int changeFase(LinkLayerRole role ,unsigned char buf,int* state){
     ua[4]=FLAG;
     */ 
     else if(role==LlRx){
-        if      (state==StartStage && buf==FLAG){
-            state=FlagStage;
+        if      (state==StartState && buf==FLAG){
+            state=FlagState;
             return 1;}
-        else if (state== FlagStage && buf==ATrRr){
-            state=AdressStage;
+        else if (state== FlagState && buf==ATrRr){
+            state=AdressState;
             return 1;}
-        else if (state== AdressStage && buf==UA_I){
-            state=controlStage;
+        else if (state== AdressState && buf==UA_I){
+            state=controlState;
             return 1;}
-        else if (state==controlStage && buf==(ATrRr^UA_I)){
-            state=bccStage;
+        else if (state==controlState && buf==(ATrRr^UA_I)){
+            state=bccState;
             return 1;}
-        else if (state==bccStage && buf==FLAG){
-            state=flagendStage;
+        else if (state==bccState && buf==FLAG){
+            state=flagendState;
             return 1;}
         else if (buf==FLAG){
-            state=FlagStage;
+            state=FlagState;
             return 1;}
         else    {
-            state=StartStage;
+            state=StartState;
             return 1;}
     }
     return 0;
@@ -106,22 +112,17 @@ int changeFase(LinkLayerRole role ,unsigned char buf,int* state){
 // the variable state is to know if the connection is done or not
 int llopen(LinkLayer connectionParameters)
 {
-    Stop=FALSE;
-    alarmEnabled=FALSE;
-    StateT=0;
-    if (fd=openSerialPort(connectionParameters.serialPort,
-                       connectionParameters.baudRate) < 0)
-    {
+    if (fd=openSerialPort(connectionParameters.serialPort,connectionParameters.baudRate) < 0){
         return -1;        
     }
-    
+
+    Stop=FALSE;
+    state=StartState;
+    alarmEnabled = FALSE;
+    alarmCount = 0;
     unsigned char set[BUFFER_SIZE];
     unsigned char ua[BUFFER_SIZE];
     unsigned char buf[BUFFER_SIZE];
-    alarmEnabled = FALSE;
-    alarmCount = 0;
-    StateT=FALSE;
-    StateR=FALSE;
     timeout=connectionParameters.timeout;
     retransmitons=connectionParameters.nRetransmissions;
 
@@ -149,14 +150,14 @@ int llopen(LinkLayer connectionParameters)
                 write(fd,set,BUFFER_SIZE);
                 alarmEnabled=TRUE;
                 alarm(timeout);
-                stage=StartStage;
-
+                state=StartState;
             }
             if (alarmCount==retransmitons){ break;}
 
-            read(fd,buf, 1);
-            int i=changeFase(connectionParameters.role,buf[0],&stage);
-            if(stage==flagendStage){
+            if (read(fd,buf, 1)==0){continue;}
+
+            int i=changeFase(connectionParameters.role,buf[0],&state);
+            if(state==flagendState){
                 alarm(0);
                 break;
             }
@@ -168,8 +169,8 @@ int llopen(LinkLayer connectionParameters)
 
         while (Stop!=FALSE){
             read(fd,buf, 1);
-            int i=changeFase(connectionParameters.role,buf[0],&stage);
-            if(stage==flagendStage){
+            int i=changeFase(connectionParameters.role,buf[0],&state);
+            if(state==flagendState){
                 Stop=TRUE;
             }
         }
@@ -189,7 +190,7 @@ void alarmHandler(int Signal){
 ////////////////////////////////////////////////
 
 int calculate_bcc2( const unsigned char *buf, int bufSize, unsigned char *data_bbc2 ){
-    // the information will be processed  so ww will return a buffer that has the information of the data and the bbc2 
+    // the information will be processed  so we will return a buffer data_bbc2 that has the information of the data and the bbc2 
     int bbc2;
     data_bbc2[0]=buf[0];
     bbc2=buf[0];
@@ -200,16 +201,124 @@ int calculate_bcc2( const unsigned char *buf, int bufSize, unsigned char *data_b
     data_bbc2[bufSize+1];
     return 0;
 }
+
+int payload_stuffing( unsigned char *data_bbc2,const unsigned char *buf, int bufSize ){
+    int j=0;
+    for(int i=0;i<bufSize;i++ ){
+        if(buf[i]==FLAG){
+            data_bbc2[j]=ESC;
+            data_bbc2[j++]=FLAG^0x20;
+        }
+        else if( buf[i]==ESC){
+            data_bbc2[j]=ESC;
+            data_bbc2[j++]=ESC^0x20;
+        }
+        else{
+            data_bbc2[j]=buf[i];
+            j++;
+        }
+    }
+    return 0;
+}
+int stuffing_size(unsigned char *buf, int bufSizedata){
+    int j=0;
+    int n=0;
+    for(int i=0; i< bufSizedata; i++){
+        if(buf[i]==FLAG||buf[i]==ESC){
+            j++;
+        }
+        n++;
+    }
+    return n+j;
+}
+
+
+int changeControlpacket(unsigned char buf,int* state, unsigned char* ol ){
+
+    if(buf==FLAG && state==StartState){
+        state=FlagState;
+        return 1;
+    }
+    else if( state== FlagState && buf==ATrRr){
+        state=AdressState;
+        return 1;
+
+    }
+    else if (state== AdressState && (buf == RR0 || buf== RR1 || buf==REJ0 || buf== REJ1)){
+        state=controlState;
+        ol= buf;
+        return 1;
+    }
+    else if( state==controlState&& buf==(ATrRr ^ol)){
+        state = bccState ;
+        return 1;
+    }
+    else if( state==bccState && buf==FLAG){
+        state=flagendState;
+        return 1;
+    }
+    else if (buf==FLAG){ 
+        state=FlagState;
+        return 1;
+    }
+    else{
+        state=StartState;
+        return 1;
+        }
+
+}
 int llwrite(const unsigned char *buf, int bufSize)
-{
+{   
+    int trframei=0;
+    int rrframei=0;
+    //1.Calculate BBC2
     //buf is the Data
     unsigned char data_bbc2[bufSize+1];
     calculate_bcc2(buf, bufSize, data_bbc2);
-    
-    //1.Calculate BBC2
-    //2. Stuff payload stuff BCC2
+    buf=data_bbc2;
+
+    //2. Stuff payload  BCC2
+    int size_payload=stuffing_size(buf, bufSize);
+    unsigned char data_payload[size_payload+1];
+    payload_stuffing(data_payload, buf, bufSize+1);
+
     //3. F, A, C, BCC1, D1...Dn, BCC2, F
+    // F,A,C,BBC1,F =5 
+    int frame_size= 5+ bufSize+1;
+
+    unsigned char *frame[frame_size];
+    frame[0]=FLAG;
+    frame[1]=ATrRr;
+    frame[2]=trframei;
+    frame[3]=ATrRr ^ trframei;
+    for( int i=0; i<size_payload; i++){
+        frame[4+i]=data_payload[i];
+    }
+    frame[frame_size-1]=FLAG;
+
     //4. Write Bytes(...)
+
+    Stop=FALSE;
+    state=StartState;
+    alarmEnabled = FALSE;
+    alarmCount = 0;
+    unsigned char ol= 0x00;
+    (void)signal(SIGALRM, alarmHandler);
+
+        while (alarmCount!=3){
+            
+            if(alarmEnabled==FALSE){
+                write(fd,frame,frame_size);
+                alarmEnabled=TRUE;
+                alarm(timeout);
+            }
+            if (read(fd,buf, 1)==0){continue;}
+
+            changeControlpacket(buf[0], &state, ol);
+
+        }
+        return 0;
+    }
     //5. Receive Confirmation (State Machine)
 
 
@@ -221,8 +330,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     //define frame
     //handle of the frame frameindex%2 
 
-    return 0;
-}
+
 
 ////////////////////////////////////////////////
 // LLREAD
