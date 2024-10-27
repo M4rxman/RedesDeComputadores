@@ -188,13 +188,24 @@ void alarmHandler(int Signal){
 // LLWRITE
 ////////////////////////////////////////////////
 
-int calculate_bcc2( int buf, int* buf_){
+int calculate_bcc2( const unsigned char *buf, int bufSize, unsigned char *data_bbc2 ){
+    // the information will be processed  so ww will return a buffer that has the information of the data and the bbc2 
+    int bbc2;
+    data_bbc2[0]=buf[0];
+    bbc2=buf[0];
+    for(int i=1; i<bufSize; i++){
+        bbc2^=buf[i];
+        data_bbc2[i]=buf[i];
+    }
+    data_bbc2[bufSize+1];
     return 0;
 }
 int llwrite(const unsigned char *buf, int bufSize)
 {
-
-
+    //buf is the Data
+    unsigned char data_bbc2[bufSize+1];
+    calculate_bcc2(buf, bufSize, data_bbc2);
+    
     //1.Calculate BBC2
     //2. Stuff payload stuff BCC2
     //3. F, A, C, BCC1, D1...Dn, BCC2, F
