@@ -233,7 +233,7 @@ int stuffing_size(unsigned char *buf, int bufSizedata){
 }
 
 
-int changeControlpacket(unsigned char buf,int* state, unsigned char* ol ){
+int changeControlpacket(unsigned char buf,int* state, unsigned char* byte ){
 
     if(buf==FLAG && state==StartState){
         state=FlagState;
@@ -246,10 +246,10 @@ int changeControlpacket(unsigned char buf,int* state, unsigned char* ol ){
     }
     else if (state== AdressState && (buf == RR0 || buf== RR1 || buf==REJ0 || buf== REJ1)){
         state=controlState;
-        ol= buf;
+        byte= buf;
         return 1;
     }
-    else if( state==controlState&& buf==(ATrRr ^ol)){
+    else if( state==controlState&& buf==(ATrRr ^ *byte)){
         state = bccState ;
         return 1;
     }
@@ -290,7 +290,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     frame[0]=FLAG;
     frame[1]=ATrRr;
     frame[2]=trframei;
-    frame[3]=ATrRr ^ trframei;
+    frame[3]=*frame[1] ^ *frame[2];
     for( int i=0; i<size_payload; i++){
         frame[4+i]=data_payload[i];
     }
@@ -302,25 +302,39 @@ int llwrite(const unsigned char *buf, int bufSize)
     state=StartState;
     alarmEnabled = FALSE;
     alarmCount = 0;
-    unsigned char ol= 0x00;
+    unsigned char byte= 0x00;
     (void)signal(SIGALRM, alarmHandler);
 
         while (alarmCount!=3){
             
-            if(alarmEnabled==FALSE){
+            if(alarmEnabled == FALSE){
                 write(fd,frame,frame_size);
                 alarmEnabled=TRUE;
                 alarm(timeout);
             }
             if (read(fd,buf, 1)==0){continue;}
+            
+            int bufsize_1= length(buf);
 
-            changeControlpacket(buf[0], &state, ol);
+            for( int i=0; i< bufsize_1;i++){
+                changeControlpacket(buf[i], &state, &byte);
+                //5. Receive Confirmation (State Machine)
 
+                if(byte==REJ0 || byte==REJ1){
+                printf(" Information rejected.");
+                return -1;
+                }
+
+                if(byte==RR0 || byte==RR1){
+                printf(" Information can be received.");
+                trframei++;
+                trframei=trframei%2;
+                }
+            }
         }
-        return 0;
+        return frame_size;
     }
-    //5. Receive Confirmation (State Machine)
-
+    
 
     //make bcc2 XOR
     //0x7D is for stuffing
@@ -338,6 +352,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 int llread(unsigned char *packet)
 {
     //1. Read Frame (STM)   
+
     //2. Destuffing
     //3. Calculate BCC2
     //4. Validate BCC2
