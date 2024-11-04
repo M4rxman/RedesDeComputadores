@@ -343,6 +343,46 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+
+
+int send_RR(unsigned char frameindex){
+    unsigned char rr[5];
+
+    rr[0]=FLAG;
+    rr[1]=ATrRr;
+    rr[2]=RR0;//has to be changed
+    rr[3]=ATrRr^rr[2];
+    rr[4]=FLAG;
+
+    write(fd,rr,5);
+    return 0;
+}
+int send_REJ(unsigned char frameindex){
+    unsigned char rej[5];
+
+    rej[0]=FLAG;
+    rej[1]=ATrRr;
+    rej[2]=REJ0;//has to be changed
+    rej[3]=ATrRr^rej[2];
+    rej[4]=FLAG;
+
+    write(fd,rej,5);
+    return 0;
+}
+
+int send_rec_DISC(){
+    unsigned char disc[5];
+
+    disc[0]=FLAG;
+    disc[1]=ARrTr;
+    disc[2]=DISC;
+    disc[3]=ATrRr^disc[2];
+    disc[4]=FLAG;
+
+    write(fd,disc,5);
+    return 0;
+}
+
 int changeReadState(unsigned char buf,int* state, unsigned char* packet, int* index){
     
     if(*state==StartState){
