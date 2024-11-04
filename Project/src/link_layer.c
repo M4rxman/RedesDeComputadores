@@ -17,6 +17,8 @@
 #define REJ0 0x54
 #define REJ1 0x55
 #define DISC 0x0B
+#define FLAG_COVER 0X5E
+#define ESC_COVER 0X5D
 
 int alarmEnabled;
 int alarmCount;
@@ -30,6 +32,8 @@ int retransmitons;
 int timeout;
 int BUFFER_SIZE=5;
 int state;
+int trframei=0;
+int rrframei=0;
 #define StartState 0
 #define FlagState 1
 #define AdressState 2
@@ -207,11 +211,11 @@ int payload_stuffing( unsigned char *data_bbc2,const unsigned char *buf, int buf
     for(int i=0;i<bufSize;i++ ){
         if(buf[i]==FLAG){
             data_bbc2[j]=ESC;
-            data_bbc2[j++]=FLAG^0x20;
+            data_bbc2[j++]=FLAG_COVER;
         }
         else if( buf[i]==ESC){
             data_bbc2[j]=ESC;
-            data_bbc2[j++]=ESC^0x20;
+            data_bbc2[j++]=ESC_COVER;
         }
         else{
             data_bbc2[j]=buf[i];
@@ -233,44 +237,35 @@ int stuffing_size(unsigned char *buf, int bufSizedata){
 }
 
 
-int changeControlpacket(unsigned char buf,int* state, unsigned char* byte ){
-
-    if(buf==FLAG && state==StartState){
-        state=FlagState;
-        return 1;
+int changeControlpacket(unsigned char buf, int* state, unsigned char* byte) {
+    if(buf == FLAG && *state == StartState) {
+        *state = FlagState;
+    } 
+    else if (*state == FlagState && buf == ATrRr) {
+        *state = AdressState;
+    } 
+    else if (*state == AdressState && (buf == RR0 || buf == RR1 || buf == REJ0 || buf == REJ1)) {
+        *state = controlState;
+        *byte = buf;
+    } 
+    else if (*state == controlState && buf == (ATrRr ^ *byte)) {
+        *state = bccState;
+    } 
+    else if (*state == bccState && buf == FLAG) {
+        *state = flagendState;
+    } 
+    else if (buf == FLAG) { 
+        *state = FlagState;
+    } 
+    else {
+        *state = StartState;
     }
-    else if( state== FlagState && buf==ATrRr){
-        state=AdressState;
-        return 1;
-
-    }
-    else if (state== AdressState && (buf == RR0 || buf== RR1 || buf==REJ0 || buf== REJ1)){
-        state=controlState;
-        byte= buf;
-        return 1;
-    }
-    else if( state==controlState&& buf==(ATrRr ^ *byte)){
-        state = bccState ;
-        return 1;
-    }
-    else if( state==bccState && buf==FLAG){
-        state=flagendState;
-        return 1;
-    }
-    else if (buf==FLAG){ 
-        state=FlagState;
-        return 1;
-    }
-    else{
-        state=StartState;
-        return 1;
-        }
-
+    return 0;
 }
+
 int llwrite(const unsigned char *buf, int bufSize)
 {   
-    int trframei=0;
-    int rrframei=0;
+    
     //1.Calculate BBC2
     //buf is the Data
     unsigned char data_bbc2[bufSize+1];
@@ -312,25 +307,24 @@ int llwrite(const unsigned char *buf, int bufSize)
                 alarmEnabled=TRUE;
                 alarm(timeout);
             }
-            if (read(fd,buf, 1)==0){continue;}
-            
+            if (read(fd,buf,1)==0){continue;}
+
             int bufsize_1= length(buf);
 
-            for( int i=0; i< bufsize_1;i++){
-                changeControlpacket(buf[i], &state, &byte);
-                //5. Receive Confirmation (State Machine)
+            changeControlpacket(buf[0], &state, &byte);
+            //5. Receive Confirmation (State Machine)
 
-                if(byte==REJ0 || byte==REJ1){
+            if(byte==REJ0 || byte==REJ1){
                 printf(" Information rejected.");
                 return -1;
-                }
+            }
 
-                if(byte==RR0 || byte==RR1){
+            if(byte==RR0 || byte==RR1){
                 printf(" Information can be received.");
                 trframei++;
                 trframei=trframei%2;
-                }
             }
+            
         }
         return frame_size;
     }
@@ -349,14 +343,115 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
-    //1. Read Frame (STM)   
+int changeReadState(unsigned char buf,int* state, unsigned char* packet, int* index){
+    
+    if(*state==StartState){
+        *index=0;
+        if(buf==FLAG){
+            *state=FlagState;
+        }
+    }
+    else if(*state==FlagState){
+        *index=0;
+        if(buf==ATrRr){
+            state=AdressState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+        } 
+        else { 
+            *state = FlagState;
+        }
+    }
+    else if(*state==AdressState){
+        if(buf==rrframei){
+            state=controlState;
+        }
+        else if(buf==(rrframei+1)%2){
+            send_RR((rrframei+1)%2);
+            return 0;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
 
+        } else {
+            *state = FlagState;
+        }
+    }
+    else if(*state==controlState && buf==(ATrRr^ARrTr)){
+            *state=bccState;
+        }
+    else if(*state==bccState){
+
+        if(buf==ESC){
+            *state=flagendState;
+        }
     //2. Destuffing
-    //3. Calculate BCC2
-    //4. Validate BCC2
-    return 0;
+
+        else if (buf == FLAG) {
+            
+                *state = 6;
+                //3. Calculate BCC2
+
+                unsigned char bcc2 = packet[*index];
+                unsigned char xor = packet[0];
+                for (int j = 1; j< *index; j++) {
+                    xor ^= packet[j];
+                }
+                if (bcc2 == xor) {  // Valid data
+                    *state = 6;
+                    send_RR((rrframei + 1) % 2);
+                    printf("SENT RR\n");
+                    rrframei = (rrframei + 1) % 2;
+                    return *index;
+                }
+                else  {
+                    send_REJ(rrframei);
+                    printf("SENT REJ\n");
+                    return -1;
+                }
+            }
+        else {
+            packet[(*index)++] = buf;
+            
+        }
+            
+        }
+    else if(state==flagendState){
+        if (buf == ESC_COVER) {
+                packet[(*index)++] = ESC;
+            }
+            else if (buf == FLAG_COVER) {
+                packet[(*index)++] = FLAG;
+            }
+            else if (buf == FLAG) {
+                packet[(*index)++] = ESC;
+                *state = 6;
+            }
+            else {
+                packet[(*index)++] = ESC;
+                packet[(*index)++] = buf;
+            }
+    }
+    else{
+        state=StartState;
+    }
+    return index;
+}
+int llread(unsigned char *packet){
+    int state=StartState;
+    int i=0;
+    unsigned char buf[1];
+    int size=0;
+    while(state != 6 ){
+        if(read(fd,buf,1)==0){continue;}
+        changeReadState(buf[0],&state, &size, packet);
+        if (size == -1){
+            return -1;
+        }
+    }
+    
+    return size;
 }
 
 ////////////////////////////////////////////////
