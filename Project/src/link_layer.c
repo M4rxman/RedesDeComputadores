@@ -20,6 +20,13 @@
 #define FLAG_COVER 0X5E
 #define ESC_COVER 0X5D
 
+
+#define StartState 0
+#define FlagState 1
+#define AdressState 2
+#define controlState 3
+#define bccState 4
+#define flagendState 5
 int alarmEnabled;
 int alarmCount;
 
@@ -34,19 +41,15 @@ int BUFFER_SIZE=5;
 int state;
 int trframei=0;
 int rrframei=0;
-#define StartState 0
-#define FlagState 1
-#define AdressState 2
-#define controlState 3
-#define bccState 4
-#define flagendState 5
 
+LinkLayerRole cRole;//stands for communication role
 
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
 int changeFase(LinkLayerRole role ,unsigned char buf,int* state){
-    if(role==LlTx){
+    cRole=role;
+    if(cRole==LlTx){
         if(state==StartState && buf==FLAG){ 
             state=FlagState;
             return 1;
@@ -84,7 +87,7 @@ int changeFase(LinkLayerRole role ,unsigned char buf,int* state){
     ua[3]=ATrRr^UA_I;
     ua[4]=FLAG;
     */ 
-    else if(role==LlRx){
+    else if(cRole==LlRx){
         if      (state==StartState && buf==FLAG){
             state=FlagState;
             return 1;}
@@ -497,10 +500,264 @@ int llread(unsigned char *packet){
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
+
+int changeCloseStateTr(unsigned char buf,int* state){
+    if(*state==StartState){
+        if(buf==FLAG){
+            *state=FlagState;
+        }
+    }
+    else if(*state==FlagState){
+        if(buf==ATrRr){
+            *state=AdressState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+        } 
+        else { 
+            *state = FlagState;
+        }
+    }
+    else if(*state==AdressState){
+        if(buf==DISC){
+            *state=controlState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+
+        } else {
+            *state = FlagState;
+        }
+    }
+    else if(*state==controlState){
+        if(buf==(ARrTr^DISC)){
+            *state=bccState;
+        }
+        else if (buf!=FLAG){
+            *state=StartState;
+        }
+        else{
+            *state=FlagState;
+        }
+    }
+    else if(*state==bccState){
+        if( buf==FLAG){
+            *state=flagendState;
+        }
+        else{
+            *state=StartState;
+        }
+    }
+    else{
+        *state=StartState;
+    }
+    return 0;
+}
+
+int changeCloseStateRrDISC(unsigned char buf,int* state){
+    if(*state==StartState){
+        if(buf==FLAG){
+            *state=FlagState;
+        }
+    }
+    else if(*state==FlagState){
+        if(buf==ATrRr){
+            *state=AdressState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+        } 
+        else { 
+            *state = FlagState;
+        }
+    }
+    else if(*state==AdressState){
+        if(buf==DISC){
+            *state=controlState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+
+        } else {
+            *state = FlagState;
+        }
+    }
+    else if(*state==controlState){
+        if( buf==(ATrRr^DISC)){
+            *state=bccState;
+        }
+        else if (buf!=FLAG){
+            *state=StartState;
+        }
+        else{
+            *state=FlagState;
+        }
+    }
+    else if(*state==bccState){
+        if( buf==FLAG){
+            *state=flagendState;
+        }
+        else{
+            *state=StartState;
+        }
+    }
+    else{
+        *state=StartState;
+    }
+    return 0;
+}
+
+int changeCloseStateRrUA(unsigned char buf,int* state){
+    if(*state==StartState){
+        if(buf==FLAG){
+            *state=FlagState;
+        }
+    }
+    else if(*state==FlagState){
+        if(buf==ATrRr){
+            *state=AdressState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+        } 
+        else { 
+            *state = FlagState;
+        }
+    }
+    else if(*state==AdressState){
+        if(buf==UA_I){
+            *state=controlState;
+        }
+        else if(buf != FLAG) {
+            *state = StartState;
+
+        } else {
+            *state = FlagState;
+        }
+    }
+    else if(*state==controlState){
+        if( buf==(ARrTr^UA_I)){
+            *state=bccState;
+        }
+        else if (buf!=FLAG){
+            *state=StartState;
+        }
+        else{
+            *state=FlagState;
+        }
+    }
+    else if(*state==bccState){
+        if( buf==FLAG){
+            *state=flagendState;
+        }
+        else{
+            *state=StartState;
+        }
+    }
+
+    return 0;   
+}
+
 int llclose(int showStatistics)
 {
-    // TODO
+    state=StartState;
+    unsigned char tr_disc[5];
+    unsigned char ua[5];
 
-    int clstat = closeSerialPort();
-    return clstat;
+    tr_disc[0]=FLAG;
+    tr_disc[1]=ATrRr;
+    tr_disc[2]=DISC;
+    tr_disc[3]=ATrRr^tr_disc[2];
+    tr_disc[4]=FLAG;
+
+    ua[0]=FLAG;
+    ua[1]=ATrRr;
+    ua[2]=UA_I;
+    ua[3]=ATrRr^UA_I;
+    ua[4]=FLAG;
+
+    alarmCount = 0;
+    alarmEnabled = FALSE;
+
+    unsigned char buf[5] = {0};
+    (void)signal(SIGALRM, alarmHandler);
+
+    if(cRole==LlTx){
+        while (alarmCount!=3){
+            if(alarmEnabled==FALSE){
+                write(fd,tr_disc,5);
+                alarmEnabled=TRUE;
+                alarm(3);
+                state=StartState;
+            }
+            if (alarmCount==3)
+            {break;}
+            read(fd,buf,1);
+
+
+            if(state==flagendState){
+                alarm(0);
+                break;
+            }
+        }
+        while (alarmCount!=3){
+            if(alarmEnabled==FALSE){
+                write(fd,ua,5);
+                alarmEnabled=TRUE;
+                alarm(timeout);
+            }
+            if (read(fd,buf,1)==0){continue;}
+
+            int i=changeCloseStateTr(buf[0],&state);
+
+            if(state==flagendState){
+                alarm(0);
+                write(fd,ua,5);
+                break;
+            }
+        }
+    }
+    else if(cRole==LlRx){
+        Stop = FALSE;
+        state = 0;
+        while (Stop == FALSE) {
+            if (read(fd, buf, 1) == 0){
+                continue;
+            }
+            changeCloseStateRrDISC(buf[0], &state);
+
+            if (state == flagendState) {
+                break;
+            }
+        }
+        alarmCount = 0;
+        alarmEnabled = FALSE;
+
+        while (alarmCount<3){
+            if(alarmEnabled==FALSE){
+                send_rec_DISC();
+                alarmEnabled=TRUE;
+                alarm(3);
+                state=StartState;
+            }
+            if(alarmCount==3){
+                break;
+            }
+
+            read(fd,buf, 1);
+            
+            changeCloseStateRrUA(buf[0],&state);
+
+            if(state==flagendState){
+                alarm(0);
+            }
+        }
+    }
+    close(fd);
+    if(state==flagendState){
+        int clstat = closeSerialPort();
+        return clstat;
+    }
+
+    return -1;
 }
